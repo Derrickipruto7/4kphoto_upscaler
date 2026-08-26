@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Upres — turn any photo into 4K</title>
+<meta name="description" content="Drop a photo in, get a sharpened 4K version out. Runs entirely in your browser." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="logo">
+      <span class="logo-mark" aria-hidden="true"></span>
+      Upres
+    </div>
+    <a class="topbar-link" href="https://github.com/" target="_blank" rel="noopener">View source</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="eyebrow">CLIENT-SIDE &middot; NO UPLOAD &middot; NO SERVER</p>
+      <h1>Every photo,<br><span class="grid-word" id="gridWord">four times</span> the pixels.</h1>
+      <p class="hero-sub">Drop in an image. Upres rebuilds it at 4K resolution and sharpens the result — entirely inside your browser tab. Nothing leaves your machine.</p>
+    </section>
+
+    <section class="workspace">
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload a photo">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <div class="dropzone-inner">
+          <div class="pixel-grid" id="pixelGrid" aria-hidden="true"></div>
+          <p class="dz-title" id="dzTitle">Drop a photo here, or click to choose one</p>
+          <p class="dz-sub" id="dzSub">JPG or PNG · processed locally · original stays private</p>
+        </div>
+      </div>
+
+      <div id="resultArea" class="result-area" hidden>
+
+        <div class="compare" id="compare">
+          <img id="beforeImg" alt="Original photo" draggable="false" />
+          <div class="after-clip" id="afterClip">
+            <img id="afterImg" alt="Upscaled and sharpened photo" draggable="false" />
+          </div>
+          <div class="handle" id="handle" aria-hidden="true"><span></span></div>
+        </div>
+
+        <div class="meta-row">
+          <div class="meta">
+            <span class="meta-label">Original</span>
+            <span class="meta-value mono" id="origDims">—</span>
+          </div>
+          <div class="meta">
+            <span class="meta-label">Upres output</span>
+            <span class="meta-value mono" id="newDims">—</span>
+          </div>
+          <div class="meta">
+            <span class="meta-label">Status</span>
+            <span class="meta-value mono" id="statusText">Idle</span>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button class="btn btn-ghost" id="resetBtn">Try another photo</button>
+          <a class="btn btn-primary" id="downloadBtn" download="upres-4k.png">Download 4K photo</a>
+        </div>
+      </div>
+
+    </section>
+
+    <section class="how">
+      <h2>How the pixels get there</h2>
+      <ol class="how-list">
+        <li><span class="how-index mono">01</span><div><strong>Frame it.</strong> Upres fits your photo inside a 3840×2160 frame, scaling the long edge up without cropping anything out.</div></li>
+        <li><span class="how-index mono">02</span><div><strong>Resample.</strong> The browser's high-quality image smoothing rebuilds every new pixel from its neighbors, rather than just stretching blocks.</div></li>
+        <li><span class="how-index mono">03</span><div><strong>Sharpen.</strong> A high-pass layer is blended back over the image to recover edge contrast that resampling softens.</div></li>
+        <li><span class="how-index mono">04</span><div><strong>Done, locally.</strong> No file ever leaves your browser tab — there's no server in this pipeline at all.</div></li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>Upres is a static, client-side tool. Resampling + sharpening only — not a machine-learning super-resolution model. See the README for details and swap-in points if you want to wire up a real ML backend.</p>
+  </footer>
+
+<script src="script.js"></script>
+</body>
+</html>
