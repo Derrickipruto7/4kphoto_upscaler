@@ -1,6 +1,14 @@
 /* ==========================================================
    Upres — client-side 4K photo upscaler
-   No server, no upload: everything runs in the browser via canvas.
+   No server, no upload: everything runs in the browser.
+
+   Primary pipeline: a real AI super-resolution model (ESRGAN,
+   via TensorFlow.js + UpscalerJS) reconstructs detail at 4x,
+   then the result is fit into a 3840x2160 frame.
+
+   If the model can't load (offline, CDN blocked, no WebGL),
+   this automatically falls back to high-quality canvas
+   resampling + sharpening so the tool still works.
    ========================================================== */
 
 const TARGET_W = 3840;
@@ -28,6 +36,43 @@ for (let i = 0; i < 64; i++) {
   const span = document.createElement('span');
   pixelGrid.appendChild(span);
 }
+
+// ---------- AI model setup ----------
+// UpscalerJS loads three UMD globals from the script tags in index.html:
+//   tf (TensorFlow.js), ESRGANSlim (the model package), Upscaler (the runner)
+let upscalerInstance = null;
+let upscalerReady = null; // promise, so concurrent calls share one load
+
+function getUpscaler() {
+  if (upscalerReady) return upscalerReady;
+
+  upscalerReady = new Promise((resolve) => {
+    try {
+      const hasGlobals =
+        typeof Upscaler !== 'undefined' &&
+        typeof ESRGANSlim !== 'undefined' &&
+        ESRGANSlim.x4;
+
+      if (!hasGlobals) {
+        console.warn('Upres: AI model scripts not found, will use fallback resampling.');
+        resolve(null);
+        return;
+      }
+
+      upscalerInstance = new Upscaler({ model: ESRGANSlim.x4 });
+      resolve(upscalerInstance);
+    } catch (err) {
+      console.warn('Upres: failed to initialize AI model, will use fallback resampling.', err);
+      resolve(null);
+    }
+  });
+
+  return upscalerReady;
+}
+
+// Warm the model up in the background as soon as the page loads, so the
+// first real upscale doesn't pay the full load cost.
+window.addEventListener('load', () => { getUpscaler(); });
 
 // ---------- Upload wiring ----------
 dropzone.addEventListener('click', () => fileInput.click());
@@ -70,22 +115,40 @@ async function handleFile(file) {
 
   pixelGrid.classList.add('busy');
   dzTitle.textContent = 'Working on it…';
-  dzSub.textContent = 'Resampling and sharpening locally, this only takes a moment';
-  setStatus('Reading file');
+  dzSub.textContent = 'Loading the AI model (first run only), this can take a moment';
+  setStatus('Loading model');
 
   const img = await loadImage(file);
   origDims.textContent = `${img.naturalWidth} × ${img.naturalHeight}px`;
 
-  // 1. Frame: scale the long edge to fit inside a 3840x2160 box, no cropping
-  setStatus('Resampling');
-  const { canvas: resized, w, h } = resampleTo4K(img);
+  let finalCanvas;
 
-  // 2. Sharpen: high-pass overlay to recover edge contrast lost in resampling
-  setStatus('Sharpening');
-  const sharpened = applyHighPassSharpen(resized);
+  const upscaler = await getUpscaler();
 
-  // 3. Small punch-up pass (contrast/saturation) for perceived clarity
-  const finalCanvas = finalGrade(sharpened);
+  if (upscaler) {
+    try {
+      setStatus('Running AI upscale');
+      dzSub.textContent = 'Reconstructing detail with the AI model';
+
+      // UpscalerJS returns a data URL of the 4x-upscaled image
+      const upscaledSrc = await upscaler.upscale(img);
+      const upscaledImg = await loadImageFromSrc(upscaledSrc);
+
+      setStatus('Framing');
+      finalCanvas = fitToFrame(upscaledImg);
+
+      setStatus('Final grade');
+      finalCanvas = finalGrade(finalCanvas);
+    } catch (err) {
+      console.warn('Upres: AI upscale failed, falling back to resampling.', err);
+      finalCanvas = await fallbackPipeline(img);
+    }
+  } else {
+    finalCanvas = await fallbackPipeline(img);
+  }
+
+  const w = finalCanvas.width;
+  const h = finalCanvas.height;
 
   newDims.textContent = `${w} × ${h}px`;
   beforeImg.src = img.src;
@@ -105,6 +168,19 @@ async function handleFile(file) {
   resultArea.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// Resampling-only fallback, used if the AI model can't load
+async function fallbackPipeline(img) {
+  setStatus('Resampling');
+  dzSub.textContent = 'AI model unavailable — resampling and sharpening locally instead';
+  const { canvas: resized } = resampleTo4K(img);
+
+  setStatus('Sharpening');
+  const sharpened = applyHighPassSharpen(resized);
+
+  setStatus('Final grade');
+  return finalGrade(sharpened);
+}
+
 function loadImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
@@ -115,8 +191,37 @@ function loadImage(file) {
   });
 }
 
-// Fit the image inside a 3840x2160 frame, upscaling if it's smaller,
-// downscaling if it's larger — never cropping, always preserving aspect ratio.
+function loadImageFromSrc(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+// Fit an (already AI-upscaled) image inside a 3840x2160 frame, scaling
+// down if it overshoots, up a little with canvas if it undershoots —
+// never cropping, always preserving aspect ratio.
+function fitToFrame(img) {
+  const srcW = img.naturalWidth || img.width;
+  const srcH = img.naturalHeight || img.height;
+  const scale = Math.min(TARGET_W / srcW, TARGET_H / srcH);
+  const w = Math.round(srcW * scale);
+  const h = Math.round(srcH * scale);
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, w, h);
+  return canvas;
+}
+
+// Fallback-only: fit the image inside a 3840x2160 frame via plain canvas
+// resampling, upscaling if it's smaller, downscaling if it's larger.
 function resampleTo4K(img) {
   const srcW = img.naturalWidth;
   const srcH = img.naturalHeight;
@@ -133,7 +238,6 @@ function resampleTo4K(img) {
 
   // For large upscale factors, step through intermediate sizes —
   // a single huge jump softens more than a couple of doubling steps.
-  let stepSrc = img;
   let stepW = srcW, stepH = srcH;
   const growth = scale > 1 ? scale : 1;
 
@@ -164,9 +268,8 @@ function resampleTo4K(img) {
   return { canvas, w, h };
 }
 
-// High-pass sharpen: blend a blurred, overlay-composited copy back onto
-// the image to punch up edge contrast that resampling smooths away.
-// Pure canvas compositing — no per-pixel loop, so it stays fast at 4K.
+// Fallback-only: high-pass sharpen, blending a blurred overlay copy back
+// onto the image to punch up edge contrast lost in plain resampling.
 function applyHighPassSharpen(sourceCanvas) {
   const w = sourceCanvas.width;
   const h = sourceCanvas.height;
@@ -187,7 +290,8 @@ function applyHighPassSharpen(sourceCanvas) {
   return out;
 }
 
-// Small final contrast/saturation lift for a bit more perceived "pop"
+// Small final contrast/saturation lift for a bit more perceived "pop".
+// Kept light since the AI pass already adds real sharpness/detail.
 function finalGrade(sourceCanvas) {
   const w = sourceCanvas.width;
   const h = sourceCanvas.height;
@@ -195,7 +299,7 @@ function finalGrade(sourceCanvas) {
   out.width = w;
   out.height = h;
   const ctx = out.getContext('2d');
-  ctx.filter = 'contrast(1.06) saturate(1.05)';
+  ctx.filter = 'contrast(1.04) saturate(1.04)';
   ctx.drawImage(sourceCanvas, 0, 0);
   return out;
 }
