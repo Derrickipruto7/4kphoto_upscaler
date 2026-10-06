@@ -358,6 +358,12 @@ a { color: inherit; }
   line-height: 1.6;
 }
 
+.footer a {
+  color: var(--signal);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ============================================================
    RESPONSIVE
    ============================================================ */
